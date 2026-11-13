@@ -1,8 +1,0 @@
-{
-  "name": "restaurant-lacour",
-  "version": "1.0.0",
-  "description": "Application de gestion du restaurant LACOUR (serveur + application installable)",
-  "private": true,
-  "scripts": { "start": "node server.js" },
-  "engines": { "node": ">=18" }
-}
