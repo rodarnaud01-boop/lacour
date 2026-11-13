@@ -20,7 +20,7 @@ depuis un lien qui envoie la commande **directement** dans l’application.
 
 1. Installez Node.js (version 18 ou plus) depuis nodejs.org.
 2. Dans ce dossier, lancez : `node server.js`
-3. Le serveur affiche deux codes : le **code du restaurant** (pour les employés) et le **code administrateur** (pour vous). Notez-les.
+3. Le serveur affiche le **code administrateur** (code d’installation du propriétaire). Notez-le. Le code des employés, lui, n’existe pas encore : c’est vous qui le générez dans l’application (voir « Codes d’accès » plus bas).
 4. Ouvrez http://localhost:3000, saisissez le code administrateur, puis créez l’administrateur principal.
 
 ## 2. Mise en ligne (nécessaire pour les téléphones)
@@ -31,7 +31,7 @@ Pour que chacun utilise l’application sur son propre appareil, le serveur doit
 Render, Railway ou Fly.io acceptent ce dossier tel quel (via le `Dockerfile`) et fournissent le HTTPS.
 - Créez un « Web Service » à partir de ce dossier (directement ou via un dépôt GitHub).
 - **Ajoutez un disque persistant** monté sur `/data` : sans lui, vos données disparaissent à chaque redémarrage. Les offres gratuites n’en proposent généralement pas ; prenez une offre payante avec disque.
-- Ajoutez les variables `RESTO_KEY` (code du restaurant) et `ADMIN_KEY` (code administrateur) avec les codes de votre choix. Choisissez des codes longs et difficiles à deviner.
+- Facultatif : ajoutez la variable `ADMIN_KEY` pour choisir vous-même le code d’installation (sinon le serveur en crée un et l’affiche dans ses journaux). Vous pourrez ensuite le changer dans l’application. Ne définissez pas `RESTO_KEY` : le code des employés est généré par l’administrateur dans l’application.
 
 ### Option B : petit serveur (VPS) avec nom de domaine
 1. Installez Node.js, copiez ce dossier sur le serveur et lancez `node server.js` en service permanent (par exemple avec `systemd` ou `pm2`).
@@ -45,10 +45,10 @@ Render, Railway ou Fly.io acceptent ce dossier tel quel (via le `Dockerfile`) et
 
 ## 3. Premier lancement et installation
 
-1. Ouvrez l’adresse du site, saisissez le **code administrateur**, puis créez le compte de l’administrateur principal (nom, prénoms, PIN).
+1. Ouvrez l’adresse du site, saisissez le **code administrateur**, puis créez le compte de l’administrateur principal (nom, prénoms, **adresse e-mail**, PIN). L’adresse e-mail sert à récupérer vos codes en cas d’oubli.
 2. Dans **Équipe**, ajoutez le gérant, les serveurs et les cuisiniers (photo, contact, adresse, CNSS, PIN).
 3. Dans **Stock et carte**, saisissez vos plats avec leur prix et leur coût de revient. Dans **Réglages**, renseignez le numéro WhatsApp du restaurant.
-4. Donnez aux employés l’adresse du site et le **code du restaurant** (ils ne le saisissent qu’une fois par appareil, puis choisissent leur profil et tapent leur PIN).
+4. Dans **Réglages > Codes d’accès**, cliquez sur **« Générer le code »** : c’est le code du restaurant. Envoyez ensuite aux employés le **lien d’installation et le code** avec le bouton WhatsApp de cette même section.
 5. Installation :
    - **Android (Chrome)** : menu ⋮ puis « Installer l’application ».
    - **iPhone (Safari)** : Partager puis « Sur l’écran d’accueil ».
@@ -68,6 +68,19 @@ En plus des quatre rôles de base (administrateur principal, gérant, serveur, c
 - les **autorisations** : annuler des commandes, modifier le stock, la carte et les dépenses.
 
 Le rôle est ensuite proposé dans la fiche de chaque employé. Un rôle ne peut être supprimé que s’il n’est attribué à personne. Seul l’administrateur (code administrateur) peut créer ou modifier les rôles : le serveur refuse ces modifications avec le code des employés.
+
+## Codes d’accès
+
+- **Générés par l’administrateur principal** : dans **Réglages > Codes d’accès**, il génère le **code du restaurant** (donné aux employés) et peut régénérer le **code administrateur**. Un nouveau code remplace l’ancien immédiatement : les appareils concernés doivent saisir le nouveau code.
+- **Récupération par e-mail** : sur l’écran de connexion, **« Code oublié ? (administrateur) »** demande l’adresse e-mail de l’administrateur principal (celle de sa fiche). Si elle correspond, le serveur lui envoie les deux codes par e-mail. Si l’adresse est inconnue, rien n’est envoyé et la réponse reste la même (on ne révèle pas quelles adresses existent). Limite : 8 demandes par 10 minutes et par adresse IP.
+- Cela nécessite le service d’envoi d’e-mails décrit dans « Récupération du PIN par e-mail ». Sans lui, les codes restent consultables dans le fichier `data/config.json` du serveur.
+
+## Installation sur téléphone dès l’ouverture du lien
+
+- Envoyez le lien **`https://votre-site/installer`** (page d’installation) : à l’ouverture, elle reconnaît le téléphone et propose le bon geste : bouton **« Installer »** sur Android (Chrome), explications **Partager > Sur l’écran d’accueil** sur iPhone, et invitation à **ouvrir dans Chrome ou Safari** lorsque le lien a été ouvert depuis WhatsApp ou Facebook.
+- L’application elle-même affiche aussi une **bannière d’installation** à l’ouverture sur téléphone (« Plus tard » la masque 3 jours). Elle disparaît une fois l’application installée.
+- Le bouton **« Envoyer le lien et le code par WhatsApp »** de Réglages envoie en un message le lien d’installation et le code du restaurant.
+- Sur iPhone, Apple n’autorise pas l’invite automatique : l’installation se fait toujours par le menu Partager de Safari.
 
 ## Récupération du PIN par e-mail
 
@@ -102,7 +115,7 @@ Toutes vos données sont dans `data/db.json`. **Copiez ce fichier régulièremen
 ## 6. Sécurité : ce qu’il faut savoir
 
 - Sans le bon code, personne ne peut lire ni modifier les données. Les fiches RH (contact, adresse, CNSS) ne sont lisibles qu’avec le **code administrateur**.
-- Ne donnez le code administrateur qu’au propriétaire. Pour changer un code, modifiez `RESTO_KEY` / `ADMIN_KEY` (ou `data/config.json`) et redémarrez : les appareils devront saisir le nouveau code.
+- Ne donnez le code administrateur qu’au propriétaire. Vous pouvez générer de nouveaux codes à tout moment dans **Réglages > Codes d’accès** (les appareils concernés devront saisir le nouveau code). Les codes sont enregistrés en clair dans `data/config.json` sur le serveur, pour pouvoir vous les renvoyer : protégez l’accès à ce fichier.
 - Les PIN servent à choisir son profil et ses droits dans l’application. Ils sont enregistrés sous forme chiffrée, mais un PIN de 4 chiffres reste simple à deviner : ce n’est pas une protection forte. La vraie barrière est le code d’accès et le HTTPS.
 - Les droits par profil (serveur, cuisinier, gérant) sont appliqués par l’application. Toute personne qui a le code du restaurant pourrait, avec des connaissances techniques, modifier des données hors de l’application. Ne diffusez ce code qu’aux employés.
 

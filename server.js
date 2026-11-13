@@ -11,19 +11,21 @@ const CF = path.join(DIR, "config.json"), DBF = path.join(DIR, "db.json");
 /* ---------- Codes d'accès ---------- */
 let cfg = {};
 try { cfg = JSON.parse(fs.readFileSync(CF, "utf8")); } catch (e) {}
-if (process.env.RESTO_KEY) cfg.key = process.env.RESTO_KEY;
-if (process.env.ADMIN_KEY) cfg.admin = process.env.ADMIN_KEY;
-const rnd = () => crypto.randomBytes(5).toString("hex");
+const CODE_ALPHA = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const newCode = () => { let c = ""; for (let i = 0; i < 8; i++) c += CODE_ALPHA[crypto.randomInt(CODE_ALPHA.length)]; return c; };
+const saveCfg = () => fs.writeFileSync(CF, JSON.stringify(cfg, null, 2));
 let fresh = false;
-if (!cfg.key) { cfg.key = rnd(); fresh = true; }
-if (!cfg.admin) { cfg.admin = rnd(); fresh = true; }
-if (fresh) { fs.writeFileSync(CF, JSON.stringify(cfg, null, 2)); }
+// Code d'installation du propriétaire : créé au premier démarrage (ou fourni par ADMIN_KEY), puis modifiable dans l'application.
+if (!cfg.admin) { cfg.admin = process.env.ADMIN_KEY || newCode(); fresh = true; }
+// Code du restaurant (employés) : généré par l'administrateur principal dans l'application (RESTO_KEY sert seulement d'amorce).
+if (!cfg.key && process.env.RESTO_KEY) { cfg.key = process.env.RESTO_KEY; fresh = true; }
+if (fresh) saveCfg();
 console.log("\n=== RESTAURANT LACOUR ===");
-console.log("Code du restaurant (employés)  :", cfg.key);
-console.log("Code administrateur (propriétaire):", cfg.admin);
-console.log("Ces codes sont aussi dans", CF, "\n");
+console.log("Code administrateur (propriétaire) :", cfg.admin);
+console.log(cfg.key ? "Le code du restaurant (employés) est déjà défini." : "Le code du restaurant (employés) n’est pas encore créé : l’administrateur principal le génère dans Réglages > Codes d’accès.");
+console.log("Les codes sont enregistrés dans", CF, "\n");
 const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
-const level = k => !k ? 0 : same(k, cfg.admin) ? 2 : same(k, cfg.key) ? 1 : 0;
+const level = k => !k ? 0 : (cfg.admin && same(k, cfg.admin)) ? 2 : (cfg.key && same(k, cfg.key)) ? 1 : 0;
 
 /* ---------- Base de données (mémoire + fichier JSON) ---------- */
 const db = new Map(); // collection -> Map(id -> données)
@@ -164,6 +166,24 @@ function recoverConfirm(d) {
   return [200, { ok: true }];
 }
 
+async function recoverCodes(d, ip) {
+  if (limited(ip + ":codes")) return [429, { err: "Trop de demandes. Réessayez dans quelques minutes." }];
+  const email = String(d.email || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return [400, { err: "Adresse e-mail invalide." }];
+  let match = false;
+  for (const [id, t] of col("team")) {
+    if (t && t.role === "admin") { const h = col("hr").get(id); if (h && String(h.email || "").trim().toLowerCase() === email) { match = true; break; } }
+  }
+  const answer = [200, { ok: true }]; // même réponse que l'adresse soit connue ou non
+  if (!match) return answer;
+  try {
+    await sendMail(email, "Vos codes d’accès · " + nameOf(), "Bonjour,\n\nVoici les codes d’accès de " + nameOf() + " :\n\nCode administrateur (propriétaire) : " + cfg.admin + "\nCode du restaurant (employés) : " + (cfg.key || "pas encore créé") + "\n\nPour des raisons de sécurité, vous pouvez générer de nouveaux codes dans Réglages > Codes d’accès.\nSi vous n’êtes pas à l’origine de cette demande, ignorez ce message.\n");
+  } catch (e) {
+    return e.code === "nomail" ? [501, { err: "L’envoi d’e-mails n’est pas configuré sur le serveur. Les codes se trouvent dans le fichier data/config.json du serveur." }] : [502, { err: "L’e-mail n’a pas pu être envoyé. Réessayez plus tard." }];
+  }
+  return answer;
+}
+
 /* ---------- Routage ---------- */
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x"), p = url.pathname;
@@ -171,6 +191,11 @@ const server = http.createServer(async (req, res) => {
   res.setHeader("referrer-policy", "same-origin");
   try {
     if (p === "/api/public" && req.method === "GET") return send(res, 200, publicInfo());
+    if (p === "/api/status" && req.method === "GET") return send(res, 200, { keySet: !!cfg.key });
+    if (p === "/api/codes/recover" && req.method === "POST") {
+      const ip = req.headers["x-forwarded-for"] ? String(req.headers["x-forwarded-for"]).split(",")[0].trim() : req.socket.remoteAddress;
+      const [c, o] = await recoverCodes(await body(req, 1024), ip); return send(res, c, o);
+    }
     if (p === "/api/public/order" && req.method === "POST") {
       const ip = req.headers["x-forwarded-for"] ? String(req.headers["x-forwarded-for"]).split(",")[0].trim() : req.socket.remoteAddress;
       if (limited(ip)) return send(res, 429, { err: "Trop de commandes. Réessayez dans quelques minutes." });
@@ -181,6 +206,16 @@ const server = http.createServer(async (req, res) => {
       const lv = level(req.headers["x-key"]);
       if (!lv) return send(res, 401, { err: "code" });
       if (p === "/api/ping") return send(res, 200, { ok: true, level: lv });
+      if (p === "/api/access" && req.method === "GET") { if (lv < 2) return send(res, 403, { err: "droits" }); return send(res, 200, { key: cfg.key || "", admin: cfg.admin }); }
+      if (p === "/api/access/rotate" && req.method === "POST") {
+        if (lv < 2) return send(res, 403, { err: "droits" });
+        const d = await body(req, 512), which = d.which;
+        if (which !== "key" && which !== "admin") return send(res, 400, { err: "code inconnu" });
+        if (which === "key") cfg.key = newCode(); else cfg.admin = newCode();
+        saveCfg();
+        for (const st of streams) if (st.level === (which === "key" ? 1 : 2)) { try { st.res.end(); } catch (e) {} }
+        return send(res, 200, { key: cfg.key || "", admin: cfg.admin });
+      }
       if (p === "/api/recover/request" && req.method === "POST") {
         const ip = req.headers["x-forwarded-for"] ? String(req.headers["x-forwarded-for"]).split(",")[0].trim() : req.socket.remoteAddress;
         const [c, o] = await recoverRequest(await body(req, 1024), ip); return send(res, c, o);
@@ -225,7 +260,7 @@ const server = http.createServer(async (req, res) => {
     }
     // fichiers statiques
     if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405); return res.end(); }
-    let f = path.normalize(path.join(PUB, decodeURIComponent(p === "/" ? "/index.html" : p)));
+    let f = path.normalize(path.join(PUB, decodeURIComponent(p === "/" ? "/index.html" : p === "/installer" ? "/installer.html" : p)));
     if (!f.startsWith(PUB + path.sep)) { res.writeHead(403); return res.end(); }
     fs.readFile(f, (err, buf) => {
       if (err) { res.writeHead(404, { "content-type": "text/plain; charset=utf-8" }); return res.end("Page introuvable"); }

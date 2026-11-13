@@ -29,10 +29,26 @@
         '<p style="margin:0 0 14px;color:#93a8ab;font-size:14px">Saisissez le code d’accès fourni par le restaurant (le propriétaire saisit le code administrateur).</p>' +
         '<input id="rc-code" type="password" autocomplete="current-password" placeholder="Code d’accès" style="width:100%;padding:12px;border-radius:8px;border:1px solid #2a4145;background:#0e1b1d;color:#e6f0ee;font-size:16px">' +
         '<div id="rc-err" style="color:#f87171;font-size:14px;min-height:20px;margin-top:8px"></div>' +
-        '<button style="width:100%;padding:12px;border:0;border-radius:8px;background:#2dd4bf;color:#06302b;font-weight:700;font-size:16px;margin-top:6px">Se connecter</button></form>';
+        '<button style="width:100%;padding:12px;border:0;border-radius:8px;background:#2dd4bf;color:#06302b;font-weight:700;font-size:16px;margin-top:6px">Se connecter</button>' +
+        '<div style="margin-top:14px;font-size:14px"><a href="#" id="rc-forgot" style="color:#2dd4bf">Code oublié ? (administrateur)</a></div>' +
+        '<div id="rc-rec" style="display:none;margin-top:10px"><p style="margin:0 0 8px;color:#93a8ab;font-size:13px">Saisissez l’adresse e-mail de l’administrateur principal : les codes d’accès lui seront envoyés.</p>' +
+        '<input id="rc-mail" type="email" autocomplete="email" placeholder="E-mail de l’administrateur" style="width:100%;padding:12px;border-radius:8px;border:1px solid #2a4145;background:#0e1b1d;color:#e6f0ee;font-size:16px">' +
+        '<button type="button" id="rc-send" style="width:100%;padding:10px;border:1px solid #2a4145;border-radius:8px;background:transparent;color:#e6f0ee;font-size:15px;margin-top:8px">Envoyer les codes par e-mail</button>' +
+        '<div id="rc-msg" style="font-size:14px;margin-top:8px;color:#93a8ab"></div></div></form>';
       document.body.appendChild(d);
       var f = d.querySelector("form"), i = d.querySelector("#rc-code"), er = d.querySelector("#rc-err");
       er.textContent = msg || ""; i.focus();
+      fetch("/api/status").then(function (r) { return r.json(); }).then(function (j) {
+        if (j && !j.keySet) { var n = document.createElement("div"); n.style.cssText = "color:#fbbf24;font-size:13px;margin:0 0 10px"; n.textContent = "Le code du restaurant n’a pas encore été créé par l’administrateur : les employés pourront se connecter une fois qu’il l’aura généré."; f.insertBefore(n, i); }
+      }).catch(function () {});
+      d.querySelector("#rc-forgot").addEventListener("click", function (e) { e.preventDefault(); var b = d.querySelector("#rc-rec"); b.style.display = b.style.display === "none" ? "block" : "none"; });
+      d.querySelector("#rc-send").addEventListener("click", function () {
+        var m = d.querySelector("#rc-mail").value.trim(), out = d.querySelector("#rc-msg"); if (!m) return; out.textContent = "Envoi…";
+        fetch("/api/codes/recover", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: m }) })
+          .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (x) { out.textContent = x.ok ? "Si cette adresse est celle de l’administrateur principal, un e-mail contenant les codes vient d’être envoyé." : (x.j.err || "Envoi impossible."); })
+          .catch(function () { out.textContent = "Serveur injoignable. Vérifiez votre connexion."; });
+      });
       f.addEventListener("submit", function (ev) {
         ev.preventDefault(); var c = i.value.trim(); if (!c) return;
         er.textContent = "Vérification…";
@@ -90,7 +106,7 @@
     if (!list.length) return;
     try {
       var r = await fetch("/api/stream?cols=" + encodeURIComponent(list.join(",")), { headers: { "x-key": CODE }, signal: my.signal });
-      if (r.status === 401) { Object.keys(cols).forEach(function (c) { C(c).subs.forEach(function (s) { if (s.err) s.err({ code: "revoked" }); }); }); return; }
+      if (r.status === 401) { try { localStorage.removeItem(KEYN); } catch (e) {} Object.keys(cols).forEach(function (c) { C(c).subs.forEach(function (s) { if (s.err) s.err({ code: "revoked" }); }); }); return; }
       var rd = r.body.getReader(), dec = new TextDecoder(), buf = ""; retry = 0;
       for (;;) {
         var x = await rd.read(); if (x.done) break;
@@ -131,7 +147,16 @@
       .catch(function () { throw { message: "Serveur injoignable. Vérifiez votre connexion." }; })
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw { message: j.err || "Erreur" }; return j; }); });
   }
+  function rget(url) {
+    return fetch(url, { headers: { "x-key": CODE } })
+      .catch(function () { throw { message: "Serveur injoignable. Vérifiez votre connexion." }; })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw { message: j.err || "Erreur" }; return j; }); });
+  }
   window.claude = {
+    access: {
+      get: function () { return rget("/api/access"); },
+      rotate: function (which) { return rpc("/api/access/rotate", { which: which }).then(function (j) { if (which === "admin" && j.admin) { CODE = j.admin; try { localStorage.setItem(KEYN, CODE); } catch (e) {} } return j; }); }
+    },
     recover: {
       request: function (id) { return rpc("/api/recover/request", { id: id }); },
       confirm: function (id, code, pinh) { return rpc("/api/recover/confirm", { id: id, code: code, pinh: pinh }); }
